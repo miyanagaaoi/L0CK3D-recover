@@ -1,0 +1,17 @@
+{
+  "device": "/dev/mapper/cachedev_0",
+  "share_root": "/volume1/<SHARE>",
+  "target_root": "/volume1/<TARGET_SHARE>/recovered",
+  "work_dir": "/dev/shm/c3rb3r_work",
+  "ssh": {
+    "host": "192.168.1.10",
+    "user": "<NAS_USER>",
+    "port": 22
+  },
+  "notes": [
+    "device 请按 /proc/mounts 中的实际 btrfs 设备填写",
+    "share_root 为被加密共享的挂载路径（只读使用）",
+    "target_root 必须在另一个卷/另一台 NAS 上，绝不要写回源卷",
+    "凭据不要写进本文件：通过环境变量 NAS_USER / NAS_PASSWORD / NAS_HOST 提供"
+  ]
+}

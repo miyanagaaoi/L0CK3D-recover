@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题 / Security
+    url: https://github.com/miyanagaaoi/L0CK3D----/security/policy
+    about: 请勿公开提交安全/隐私相关问题，按 SECURITY.md 私下报告
+  - name: 使用问题 / Questions
+    url: https://github.com/miyanagaaoi/L0CK3D----/discussions
+    about: 使用讨论；提问前请先读 GITHUB_GUIDE.md 与 AGENT_RUNBOOK.md

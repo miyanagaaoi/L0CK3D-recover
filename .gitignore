@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 恢复产物/临时文件（切勿提交真实数据）
+recovered/
+*.L0CK3D
+*.l0ck3d
+*.bak
+*.tmp
+
+# 本地配置/凭据
+config.json
+.env
+*.pem
+*.key
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

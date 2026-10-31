@@ -1,5 +1,7 @@
 # C3RB3R（.L0CK3D）勒索事件 · Btrfs 数据恢复复盘案例
 
+**语言**：[简体中文](README.md) | [English](README_EN.md)
+
 > 🚀 **GitHub 开源使用指引见 [GITHUB_GUIDE.md](GITHUB_GUIDE.md)**：怎么开始、如何把本仓库作为 AI 技能引入、工具/模型选择、每一步注意事项、中文表达规范、参考文献。
 
 > 本文件夹是一次真实勒索事件（Synology DSM + Btrfs 卷，C3RB3R 家族，`.L0CK3D` 后缀）的**脱敏复盘**，供其他运维/安全/数据恢复人员参考，并配可直接复用的脚本工具包。
@@ -27,6 +29,8 @@
 ```
 c3rb3r_case_report/
 ├── README.md                 ← 本文件（总览、快速导航）
+├── README_EN.md              ← 英文总览
+├── GITHUB_GUIDE.md           ← GitHub 开源使用指引（快速开始/技能引入/工具与AI选择/注意事项）
 ├── AGENT_RUNBOOK.md          ← 给 AI/自动化执行的作业手册（阶段机、判据、失败分支）
 ├── case_summary.json         ← 机器可读摘要（时间线、统计、方法、工具）
 ├── manifest.json             ← 文档与工具清单（AI 读取入口）
@@ -35,6 +39,9 @@ c3rb3r_case_report/
 ├── 03_recovery_methods.md    ← 五类恢复方法与实测效果
 ├── 04_lessons.md             ← 经验教训、失败边界、决策表、常见坑
 ├── 05_report_template.md     ← 恢复报告模板（可直接套用）
+├── SECURITY.md / LICENSE / CONTRIBUTING.md / CHANGELOG.md
+├── examples/                 ← 示例配置与命令
+├── .github/                  ← CI 自检、Issue/PR 模板
 └── toolkit/                  ← 脱敏后的可复用脚本 + 工具清单
     ├── README.md
     ├── tools_manifest.json

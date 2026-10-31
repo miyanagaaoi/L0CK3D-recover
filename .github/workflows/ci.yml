@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Python syntax check (toolkit)
+        run: |
+          find toolkit -name '*.py' -print0 | xargs -0 -n1 python -m py_compile
+          echo "py_compile OK"
+
+      - name: JSON validity
+        run: |
+          python - <<'PY'
+          import glob, json
+          files = glob.glob('**/*.json', recursive=True)
+          for f in sorted(files):
+              json.load(open(f, encoding='utf-8'))
+              print('OK', f)
+          print('total', len(files))
+          PY
+
+      - name: Markdown files present
+        run: |
+          for f in README.md README_EN.md GITHUB_GUIDE.md AGENT_RUNBOOK.md \
+                   01_incident.md 02_forensics.md 03_recovery_methods.md \
+                   04_lessons.md 05_report_template.md SECURITY.md CONTRIBUTING.md; do
+            test -s "$f" || { echo "missing: $f"; exit 1; }
+          done
+          echo "markdown OK"
