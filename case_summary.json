@@ -1,0 +1,144 @@
+{
+  "case": {
+    "id": "c3rb3r-btrfs-2026-10",
+    "family": "C3RB3R",
+    "ext": ".L0CK3D",
+    "os": "Synology DSM 7.x",
+    "filesystem": "btrfs",
+    "volumes": {
+      "volume1": "CoW",
+      "volume2": "+C (NoCOW)"
+    }
+  },
+  "timeline": [
+    {
+      "t": "Day0 03:11",
+      "event": "encryption starts, read-me3.txt written"
+    },
+    {
+      "t": "Day0 04:16",
+      "event": "encryption ends, process exits"
+    },
+    {
+      "t": "Day0",
+      "event": "discovery, no reboot, no deletion"
+    },
+    {
+      "t": "Day1",
+      "event": "read-only forensics, scan for recoverable candidates"
+    },
+    {
+      "t": "Day1-Day2",
+      "event": "delta method, precise extent method, free-space carving"
+    },
+    {
+      "t": "Day2",
+      "event": "csum verification, recycle restore, delivery + report"
+    }
+  ],
+  "inventory": {
+    "encrypted_files": 1295238,
+    "encrypted_gb": 2981.27,
+    "note": "excludes #recycle and @docker image-layer duplicates"
+  },
+  "recovery": {
+    "files": 73809,
+    "gb": 351.71,
+    "file_rate": 0.0942,
+    "byte_rate": 0.2137,
+    "note": "excludes @synologydrive; including it: files 7.88%, bytes 13.70%"
+  },
+  "by_size": [
+    {
+      "bin": "<1MB",
+      "enc_files": 686831,
+      "enc_gb": 67.34,
+      "rec_files": 44919,
+      "rec_gb": 3.09,
+      "file_rate": 0.0654,
+      "byte_rate": 0.0451
+    },
+    {
+      "bin": "1-128MB",
+      "enc_files": 87477,
+      "enc_gb": 525.55,
+      "rec_files": 27971,
+      "rec_gb": 204.35,
+      "file_rate": 0.3198,
+      "byte_rate": 0.3888
+    },
+    {
+      "bin": ">=128MB",
+      "enc_files": 1016,
+      "enc_gb": 673.93,
+      "rec_files": 170,
+      "rec_gb": 63.27,
+      "file_rate": 0.1673,
+      "byte_rate": 0.0939
+    }
+  ],
+  "by_dir_file_rate": {
+    "shared_A": 0.1556,
+    "shared_B": 0.1532,
+    "shared_C": 0.0992,
+    "shared_D": 0.035,
+    "shared_E": 0.0357,
+    "shared_F": 0.0135,
+    "shared_G": 0.0127,
+    "shared_H": 0.0028,
+    "shared_I": 0.0001,
+    "shared_J": 0,
+    "shared_K": 0,
+    "shared_L": 0,
+    "shared_M": 0
+  },
+  "methods": [
+    {
+      "name": "delta",
+      "target": "0x25/0x26",
+      "principle": "coW bookend extent, infer original base from delta"
+    },
+    {
+      "name": "precise_extent",
+      "target": "0x25/0x26 fragmented",
+      "principle": "EXTENT_DATA mapping, splice encrypted ranges with plaintext"
+    },
+    {
+      "name": "free_space_carving",
+      "target": "0x24 images/pdf/zip/ole",
+      "principle": "format magic + original length N"
+    },
+    {
+      "name": "old_root_bookend",
+      "target": "A/B failures",
+      "principle": "btrfs-find-root old fs tree",
+      "result": "failed in this case"
+    },
+    {
+      "name": "csum_verify",
+      "target": "delivery QA",
+      "principle": "btrfs CRC32C per 4K block",
+      "result": "100% match (16 files / 9512 blocks)"
+    }
+  ],
+  "csum_verification": {
+    "files": 16,
+    "blocks": 9512,
+    "matched": 9512,
+    "mismatched": 0,
+    "missing": 0
+  },
+  "carving_results": {
+    "photos": 15977,
+    "documents": 29440,
+    "ole": 22035,
+    "note": "merged under _recovered_carve and distributed to original dirs"
+  },
+  "tools": "toolkit/",
+  "references": [
+    "https://github.com/soimy/c3rb3r-rescue",
+    "https://github.com/soimy/c3rb3r-rescue/issues/12",
+    "https://github.com/sunkangbo121-ship-it/c3rb3r-btrfs-extent-rescue",
+    "https://github.com/crt106/c3rb3r-btrfs-recovery"
+  ]
+}

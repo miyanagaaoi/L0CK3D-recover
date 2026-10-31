@@ -1,0 +1,377 @@
+{
+  "schema": "c3rb3r-toolkit-manifest/1",
+  "package": "c3rb3r-recovery-toolkit",
+  "version": "1.0.0",
+  "description": "脱敏、可复用的 C3RB3R(.L0CK3D) 勒索恢复工具包：btrfs 元数据解析、delta 法恢复、精确 extent 恢复、空闲空间雕刻与多级校验",
+  "target_environment": {
+    "source_host": "Synology DSM 7.x / Linux, root, btrfs (single-device SINGLE/DUP)",
+    "python": ">=3.8 (stdlib only)",
+    "btrfs_progs": "btrfs-debug-tree / btrfs restore / btrfs-find-root",
+    "optional": ["Pillow (check_carve_pil.py)", "sshpass (password SSH auth)"]
+  },
+  "sides": {
+    "nas": "源归档 NAS（root），需要读块设备或 FIEMAP",
+    "analysis": "操作机，只处理文本/JSON/普通文件，不碰块设备"
+  },
+  "env_vars": [
+    {"name": "NAS_USER", "required": true, "purpose": "备份主机登录账号（脱敏：不写进脚本）"},
+    {"name": "NAS_HOST", "required": true, "purpose": "备份主机地址（脱敏：不写进脚本）"},
+    {"name": "NAS_PASSWORD", "required": false, "purpose": "可选密码登录，经 sshpass -e 传递"},
+    {"name": "NAS_SSH_KEY", "required": false, "default": "/root/.ssh/id_ed25519"},
+    {"name": "NAS_PORT", "required": false, "default": "22"},
+    {"name": "SRC_DEV", "required": false, "default": "/dev/mapper/cachedev_0", "purpose": "源块设备（DSM 通用路径示例）"},
+    {"name": "MIN_PARTIAL_COVER", "required": false, "default": "0.5"},
+    {"name": "MAX_EXTRACT_SIZE", "required": false, "default": "1610612736"}
+  ],
+  "safety": {
+    "read_only_source": true,
+    "never_write_source_volume": true,
+    "forbidden": ["btrfs balance", "btrfs scrub", "btrfs defrag", "mount -o rw (during recovery)", "writing to the source block device"],
+    "write_policy": "恢复产物只写到另一个卷或另一台主机；新建文件使用 O_CREAT|O_EXCL，绝不覆盖已有文件",
+    "operator_duty": "输出目录必须位于另一个卷——脚本不替操作者校验这一点"
+  },
+  "reconstructed": [
+    "extent_tools/tools_parse_free_space.py",
+    "extent_tools/tools_make_ranges.py",
+    "extent_tools/tools_raw_reader2.py"
+  ],
+  "tools": [
+    {
+      "name": "scan_recoverable.py",
+      "side": "nas",
+      "purpose": "遍历目录内 .L0CK3D 文件，解析 588 字节页脚并用 FIEMAP 判断是否存在独立明文 extent，据此分类可恢复性",
+      "args": [
+        {"name": "--root", "required": true, "desc": "扫描根目录"},
+        {"name": "--out", "required": false, "default": "/tmp/ir_scan.json", "desc": "扫描 JSON 输出"}
+      ],
+      "inputs": ["目录树中的 *.L0CK3D"],
+      "outputs": ["扫描 JSON: {root,total,stats,recoverable_files:[{path,orig,mode,delta}]}"],
+      "read_only": true,
+      "origin": "check21/scan_recoverable.py",
+      "reconstructed": false
+    },
+    {
+      "name": "calc_delta.py",
+      "side": "nas",
+      "purpose": "对指定的若干 .L0CK3D 单独计算 delta（明文逻辑偏移 - 文件偏移），输出与 scan_recoverable.py 相同格式的扫描 JSON",
+      "args": [
+        {"name": "--out", "required": false, "default": "/dev/shm/extent/scan_archives.json"},
+        {"name": "--root", "required": false, "desc": "写入 JSON 的相对路径基准"},
+        {"name": "--mode25-pct", "required": false, "desc": "强制按 0x25 的 pct 重算加密段"},
+        {"name": "files", "required": true, "desc": "一个或多个 .L0CK3D 路径"}
+      ],
+      "inputs": [".L0CK3D 文件"],
+      "outputs": ["扫描 JSON", "stdout OK/NO_PLAIN 摘要"],
+      "read_only": true,
+      "origin": "check21/calc_delta.py",
+      "reconstructed": false
+    },
+    {
+      "name": "recover_batch3.py",
+      "side": "nas",
+      "purpose": "delta 法批量恢复：整文件读入内存 → 格式头校验 + sha256 → 按批 tar 流推送备份主机，不在源机落临时镜像",
+      "args": [
+        {"name": "--scan", "required": true},
+        {"name": "--target", "required": true, "desc": "备份主机目标目录"},
+        {"name": "--batch-bytes", "required": false, "default": "419430400"},
+        {"name": "--batch-count", "required": false, "default": "200"}
+      ],
+      "inputs": ["扫描 JSON (scan_recoverable.py)"],
+      "outputs": ["备份主机上的恢复文件", "stdout JSONL: path/out/status/orig/sha256/format + event=progress/done"],
+      "read_only": true,
+      "origin": "check21/recover_batch3.py",
+      "reconstructed": false
+    },
+    {
+      "name": "stream_recover.py",
+      "side": "nas",
+      "purpose": "大文件流式 delta 恢复：按固定块从源盘读取并直写备份主机，内存占用恒定（默认 32 MiB/块）",
+      "args": [
+        {"name": "--scan", "required": true},
+        {"name": "--target", "required": true},
+        {"name": "--chunk", "required": false, "default": "33554432"}
+      ],
+      "inputs": ["扫描 JSON"],
+      "outputs": ["备份主机上的大文件", "stdout JSONL: path/status/bytes/rc"],
+      "read_only": true,
+      "origin": "check21/stream_recover.py",
+      "reconstructed": false
+    },
+    {
+      "name": "carve_all.py",
+      "side": "nas",
+      "purpose": "在空闲空间物理区间内按魔数(JPEG/PNG/PDF/ZIP)雕刻，用文件尾魔数定长，只保留长度命中(格式,原始大小)清单的候选",
+      "args": [
+        {"name": "--list", "required": true, "desc": "清单 TSV: root/rel/size/fmt(img|pdf|zip)"},
+        {"name": "--ranges", "required": true, "desc": "物理区间文件，每行 offset length"},
+        {"name": "--out", "required": true},
+        {"name": "--dev", "required": false, "default": "/dev/mapper/cachedev_0"},
+        {"name": "--block", "required": false, "default": "8388608"},
+        {"name": "--max-file", "required": false, "default": "4194304"}
+      ],
+      "inputs": ["清单 TSV", "物理区间文件"],
+      "outputs": ["候选 JSON: [[fmt, phys_offset, length, rel_path], ...]"],
+      "read_only": true,
+      "origin": "check21/carve_all.py",
+      "reconstructed": false
+    },
+    {
+      "name": "carve_export.py",
+      "side": "nas",
+      "purpose": "雕刻候选与清单按(格式,长度)配对，唯一配对进 certain/，其余进 maybe/，tar 流推送到备份主机",
+      "args": [
+        {"name": "--list", "required": true},
+        {"name": "--cands", "required": true},
+        {"name": "--target", "required": true},
+        {"name": "--dev", "required": false, "default": "/dev/mapper/cachedev_0"}
+      ],
+      "inputs": ["清单 TSV", "carve_all.py 候选 JSON"],
+      "outputs": ["备份主机 certain/ 与 maybe/ 下的文件"],
+      "read_only": true,
+      "origin": "check21/carve_export.py",
+      "reconstructed": false
+    },
+    {
+      "name": "csum_check.py",
+      "side": "nas",
+      "purpose": "解析 superblock → root tree → csum tree，抽取抽样文件各 4 KiB 块 CRC32C，按 chunkmap 读回数据逐块比对（块级完整性硬证据）",
+      "args": [
+        {"name": "--chunkmap", "required": true},
+        {"name": "--scan", "required": true, "desc": "扫描 JSON，多个用逗号分隔"},
+        {"name": "--sample", "required": false, "default": "5"},
+        {"name": "--dev", "required": false, "default": "/dev/mapper/cachedev_0"},
+        {"name": "--out", "required": false, "default": "/dev/shm/extent/csum_check_result.json"}
+      ],
+      "inputs": ["块设备", "chunkmap", "扫描 JSON"],
+      "outputs": ["校验 JSON: [{path,blocks,ok,bad,missing}]", "stdout TOTAL"],
+      "read_only": true,
+      "origin": "check21/csum_check.py",
+      "reconstructed": false
+    },
+    {
+      "name": "validate_ole.py",
+      "side": "analysis",
+      "purpose": "OLE 复合文档(doc/xls/ppt/msg)结构校验：签名、扇区大小、目录项、大小对齐",
+      "args": [
+        {"name": "--root", "required": true},
+        {"name": "--out", "required": false, "default": "同目录 ole_validate.csv"},
+        {"name": "--only", "required": false, "desc": "只校验指定扩展名，如 .doc"}
+      ],
+      "inputs": ["待校验文件目录"],
+      "outputs": ["CSV(UTF-8 BOM): rel,size,status(OK|BAD_HEADER|BAD_DIR|BAD_STRUCT|FAIL)"],
+      "read_only": true,
+      "origin": "check21/validate_ole.py",
+      "reconstructed": false
+    },
+    {
+      "name": "validate_office_zip.py",
+      "side": "analysis",
+      "purpose": "ZIP/OOXML 容器完整性校验：zipfile.testzip 逐条目 CRC + 是否含 [Content_Types].xml 识别 Office 文档",
+      "args": [
+        {"name": "--root", "required": true},
+        {"name": "--out", "required": false, "default": "同目录 office_zip_validate.csv"}
+      ],
+      "inputs": ["待校验文件目录"],
+      "outputs": ["CSV(UTF-8 BOM): rel,entries,is_office,status(OK|FAIL)"],
+      "read_only": true,
+      "origin": "check21/validate_*_office.py（文件名含客户缩写，已改名）",
+      "reconstructed": false
+    },
+    {
+      "name": "check_carve_pil.py",
+      "side": "analysis",
+      "purpose": "雕刻图片抽样真解码(PIL load)，统计可解码率作为雕刻质量判据",
+      "args": [
+        {"name": "--root", "required": true},
+        {"name": "--subdirs", "required": false, "default": "certain,maybe"},
+        {"name": "--sample", "required": false, "default": "150"},
+        {"name": "--seed", "required": false, "default": "7"}
+      ],
+      "inputs": ["雕刻导出目录"],
+      "outputs": ["stdout: 每子目录 total/sample/ok/bad/ok_rate"],
+      "read_only": true,
+      "requires": ["Pillow"],
+      "origin": "check21/check_carve_pil.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_chunkmap.py",
+      "side": "analysis",
+      "purpose": "把 btrfs chunk tree 文本 dump 转成统一 CHUNKMAP(logical length physical type)；RAID 条带 chunk 跳过并报告",
+      "args": [{"name": "DUMP_TXT", "required": true}],
+      "inputs": ["btrfs-debug-tree -t 3 的输出文本"],
+      "outputs": ["stdout CHUNKMAP 行", "stderr 统计"],
+      "read_only": true,
+      "origin": "check21/extent_tools/tools_chunkmap.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_walk_tree.py",
+      "side": "nas",
+      "purpose": "从 superblock 出发遍历当前子卷 fs tree，输出 inode/ref/ext 记录（带叶子 generation 与地址）",
+      "args": [
+        {"name": "DEVICE", "required": true, "desc": "底层 LV，如 /dev/mapper/vg1-volume_1"},
+        {"name": "CHUNKMAP", "required": true},
+        {"name": "SUBVOL_ID", "required": true}
+      ],
+      "inputs": ["块设备", "chunkmap"],
+      "outputs": ["JSONL: {t:inode|ref|ext, ...}"],
+      "read_only": true,
+      "origin": "check21/extent_tools/tools_walk_tree.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_parse_leaves.py",
+      "side": "nas",
+      "purpose": "解析 btrfs-find-root 找到的孤儿旧叶子（攻击前 fs-tree 叶子），输出同格式 JSONL（另含 DIR_INDEX）",
+      "args": [
+        {"name": "DEVICE", "required": true},
+        {"name": "CHUNKMAP", "required": true},
+        {"name": "LEAFLIST", "required": true, "desc": "gen level bytenr 每行"},
+        {"name": "OWNER", "required": true, "desc": "子卷 ID，用于校验叶子头 owner"}
+      ],
+      "inputs": ["块设备", "chunkmap", "叶子清单"],
+      "outputs": ["JSONL: inode/ref/dir/ext"],
+      "read_only": true,
+      "notes": "NODESIZE 固定 16 KiB（btrfs 默认），不同 nodesize 需修改",
+      "origin": "check21/extent_tools/tools_parse_leaves.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_make_jobs2.py",
+      "side": "analysis",
+      "purpose": "为 PREFIX 下所有仍在的加密文件生成 jobs.jsonl：精确旧引用优先，其后为整 extent 合成引用",
+      "args": [
+        {"name": "CURRENT_ITEMS", "required": true},
+        {"name": "ORPHAN_ITEMS", "required": true, "desc": "可为空文件"},
+        {"name": "CUTOFF", "required": true, "desc": "攻击时的 btrfs generation"},
+        {"name": "ENCRYPTED_LIST", "required": true, "desc": "TSV: size/rel.L0CK3D"},
+        {"name": "PREFIX", "required": true, "desc": "相对子卷根的目标目录，如 USER/Photos/"},
+        {"name": "JOBS", "required": true, "desc": "输出 jobs.jsonl"}
+      ],
+      "inputs": ["当前树 JSONL", "孤儿叶子 JSONL", "清单 TSV"],
+      "outputs": ["jobs.jsonl: {rel,ino,extents:[[foff,dbytenr,eoff,nbytes]]}", "stdout 统计"],
+      "read_only": true,
+      "origin": "check21/extent_tools/tools_make_jobs2.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_extract_jobs.py",
+      "side": "nas",
+      "purpose": "按 jobs.jsonl 把攻击前 extent 数据填回加密段，拼接原始文件；完整覆盖写 ok/，部分覆盖且魔数合理写 partial/（密文区清零）",
+      "args": [
+        {"name": "DEVICE", "required": true},
+        {"name": "CHUNKMAP", "required": true},
+        {"name": "TARGET_ROOT", "required": true, "desc": "现存 .L0CK3D 所在目录（只读）"},
+        {"name": "JOBS", "required": true},
+        {"name": "OUT_DIR", "required": true, "desc": "必须位于另一个卷"},
+        {"name": "PARTIAL_DIR", "required": true, "desc": "必须位于另一个卷"}
+      ],
+      "env": ["MIN_PARTIAL_COVER", "MAX_EXTRACT_SIZE"],
+      "inputs": ["块设备", "现存 .L0CK3D", "jobs.jsonl"],
+      "outputs": ["OUT_DIR/PARTIAL_DIR 下的文件", "stdout JSONL: status(OK|OK_UNVERIFIED|PARTIAL|FAIL|EXISTS|ERR), cover, magic, same_as_cipher"],
+      "read_only": true,
+      "notes": "单文件超 MAX_EXTRACT_SIZE(默认1.5GiB) 报 ERR BIG，需流式版本",
+      "origin": "check21/extent_tools/tools_extract_jobs.py",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_btrfs_restore_run.sh",
+      "side": "nas",
+      "purpose": "用 btrfs restore 从攻击前旧 fs-tree root 做整目录恢复（只读源设备，输出到另一个卷）",
+      "args": [
+        {"name": "LV_DEVICE", "required": true, "desc": "底层 LV，不是已挂载的 cachedev_N"},
+        {"name": "OUT_DIR", "required": true, "desc": "必须不存在且在另一个卷"},
+        {"name": "PATH_REGEX", "required": true, "desc": "如 '^/(|USER(|/Photos(|/.*)))$'"},
+        {"name": "ROOT_BYTENR", "required": true, "desc": "一个或多个旧 fs-tree root bytenr"}
+      ],
+      "inputs": ["块设备", "旧 root bytenr 列表"],
+      "outputs": ["OUT_DIR 下的文件", "$OUT_DIR.log"],
+      "read_only": true,
+      "origin": "check21/extent_tools/tools_btrfs_restore_run.sh",
+      "reconstructed": false
+    },
+    {
+      "name": "extent_tools/tools_parse_free_space.py",
+      "side": "analysis",
+      "purpose": "解析 btrfs-debug-tree -t 10 的 free space tree dump，输出逻辑空闲区间 JSON（长度缺失时按下一区间起始推导上界）",
+      "args": [
+        {"name": "FREE_TXT", "required": true},
+        {"name": "FREE_JSON", "required": true},
+        {"name": "--last-len", "required": false, "default": "0", "desc": "给最后一个区间指定长度，0=丢弃"},
+        {"name": "--dry-run", "required": false}
+      ],
+      "inputs": ["free space tree dump 文本"],
+      "outputs": ["JSON: [[logical_start, length], ...]"],
+      "read_only": true,
+      "notes": "不支持 free-space bitmap 模式（会明确报错）；长度可能为上界，需用 btrfs filesystem usage -b 交叉核对",
+      "origin": "案例 carve_step2.sh / carve_step4.sh 的调用约定（原件未留存）",
+      "reconstructed": true
+    },
+    {
+      "name": "extent_tools/tools_make_ranges.py",
+      "side": "analysis",
+      "purpose": "把逻辑空闲区间按 chunk 映射换算成物理扫描区间（跨 chunk 切分并合并相邻段），产出 carve_all.py 需要的 ranges 文件",
+      "args": [
+        {"name": "CHUNKS", "required": true, "desc": "CHUNKMAP 文本或 chunks JSON"},
+        {"name": "FREE", "required": true, "desc": "tools_parse_free_space.py 输出的 JSON"},
+        {"name": "MINLEN", "required": true, "desc": "丢弃小于该长度的区间，0=不丢"},
+        {"name": "OUT", "required": true, "desc": "输出: 每行 '物理偏移 长度'"}
+      ],
+      "inputs": ["chunkmap", "空闲区间 JSON"],
+      "outputs": ["ranges 文本文件"],
+      "read_only": true,
+      "notes": "只支持单设备 SINGLE/DUP",
+      "origin": "案例 carve_step2/3/4.sh 的调用约定（原件未留存）",
+      "reconstructed": true
+    },
+    {
+      "name": "extent_tools/tools_raw_reader2.py",
+      "side": "nas",
+      "purpose": "只读「逻辑地址→物理地址」随机读取器（可 import 的 RawReader 库 + CLI），用于验证 bytenr/extent 对应字节、排查恢复问题",
+      "args": [
+        {"name": "DEVICE", "required": true},
+        {"name": "CHUNKMAP", "required": true},
+        {"name": "LOGICAL", "required": true},
+        {"name": "LENGTH", "required": true},
+        {"name": "OUT", "required": false, "desc": "省略则二进制写 stdout"},
+        {"name": "--hex", "required": false, "desc": "只打印前 N 字节十六进制"},
+        {"name": "--check", "required": false, "desc": "只校验映射连续性"}
+      ],
+      "inputs": ["块设备", "chunkmap"],
+      "outputs": ["原始字节 / 十六进制 / mapped= 校验结果"],
+      "read_only": true,
+      "origin": "案例 recover_batch3.py / stream_recover.py 的 Reader 类（抽离重写）",
+      "reconstructed": true
+    }
+  ],
+  "pipelines": {
+    "delta_recovery": [
+      "scan_recoverable.py",
+      "recover_batch3.py | stream_recover.py",
+      "csum_check.py",
+      "validate_ole.py | validate_office_zip.py | check_carve_pil.py"
+    ],
+    "extent_recovery": [
+      "extent_tools/tools_chunkmap.py",
+      "extent_tools/tools_walk_tree.py",
+      "extent_tools/tools_parse_leaves.py",
+      "extent_tools/tools_make_jobs2.py",
+      "extent_tools/tools_extract_jobs.py"
+    ],
+    "carving": [
+      "extent_tools/tools_chunkmap.py",
+      "extent_tools/tools_parse_free_space.py",
+      "extent_tools/tools_make_ranges.py",
+      "carve_all.py",
+      "carve_export.py",
+      "check_carve_pil.py"
+    ]
+  },
+  "not_included": [
+    {"name": "extract_big.py", "reason": "流式 extent 恢复，未在本次范围；可用 stream_recover.py 的分块写法扩展"},
+    {"name": "verify_restored.py", "reason": "恢复结果分类(OK_*/ENCRYPTED/ZEROS/UNKNOWN)，仅查文件头"},
+    {"name": "merge_exec.py", "reason": "reflink 合并计划执行器"},
+    {"name": "video repair suite", "reason": "movsamples/videofix/headerfix/gapfill 等视频修复工具，属另一专题"}
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "c3rb3r-case-report",
+  "version": "1.0.0",
+  "description": "Sanitized post-mortem of a C3RB3R (.L0CK3D) ransomware incident on Synology DSM + Btrfs, with reusable toolkit and AI-executable runbook.",
+  "entrypoints": {
+    "human": "README.md",
+    "ai": "AGENT_RUNBOOK.md",
+    "structured": "case_summary.json"
+  },
+  "files": [
+    {"path": "GITHUB_GUIDE.md", "purpose": "GitHub 开源使用指引（快速开始/技能引入/工具与AI选择/注意事项/中文表达/参考文献）"},
+    {"path": "README.md", "purpose": "总览、快速导航、脱敏说明、边界提醒"},
+    {"path": "AGENT_RUNBOOK.md", "purpose": "AI 执行手册：阶段机、判据、失败分支、阈值、错误处理"},
+    {"path": "case_summary.json", "purpose": "机器可读摘要（时间线、统计、方法、结果）"},
+    {"path": "manifest.json", "purpose": "本清单"},
+    {"path": "SECURITY.md", "purpose": "安全与负责任披露说明"},
+    {"path": "LICENSE", "purpose": "MIT 许可证"},
+    {"path": "01_incident.md", "purpose": "事件经过与时间线（脱敏）"},
+    {"path": "02_forensics.md", "purpose": "C3RB3R 格式与 Btrfs CoW/NoCOW 原理、现场检测方法"},
+    {"path": "03_recovery_methods.md", "purpose": "五类恢复方法细节与实测效果"},
+    {"path": "04_lessons.md", "purpose": "经验教训、失败边界、决策表、常见坑、公开方案对照"},
+    {"path": "05_report_template.md", "purpose": "恢复报告模板（套用）"},
+    {"path": "toolkit/README.md", "purpose": "工具包说明与使用顺序"},
+    {"path": "toolkit/tools_manifest.json", "purpose": "工具清单（AI 读取）"}
+  ],
+  "toolkit": {
+    "root": "toolkit/",
+    "manifest": "toolkit/tools_manifest.json",
+    "notes": "脚本均已脱敏，连接参数通过环境变量/命令行传入"
+  },
+  "sanitization": {
+    "replaced": ["IP addresses", "usernames/passwords", "hostname", "organization/person names", "sensitive share names"],
+    "preserved": ["generic directory names", "statistics", "technical details", "script structure"],
+    "env_vars": ["NAS_HOST", "NAS_USER", "NAS_PASSWORD", "TARGET_HOST"]
+  },
+  "safety": {
+    "read_only": true,
+    "forbidden_commands": ["btrfs balance", "btrfs scrub", "btrfs defrag", "btrfs check --repair", "fsck"],
+    "delivery_rule": "recovered artifacts must be written to a separate target volume, never the source volume"
+  }
+}
